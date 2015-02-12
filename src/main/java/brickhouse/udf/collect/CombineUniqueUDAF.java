@@ -22,12 +22,17 @@ package brickhouse.udf.collect;
  *    lists together to return a list of unique values 
  */
 
+import scala.collection.mutable.ArrayBuffer;
+import scala.collection.mutable.Buffer;
+import scala.collection.Seq;
+import scala.collection.JavaConversions;
 import org.apache.hadoop.hive.ql.exec.Description;
 import org.apache.hadoop.hive.ql.exec.UDFArgumentTypeException;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
 import org.apache.hadoop.hive.ql.udf.generic.AbstractGenericUDAFResolver;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDAFEvaluator;
+import org.apache.hadoop.hive.ql.udf.generic.GenericUDAFEvaluator.AbstractAggregationBuffer;
 import org.apache.hadoop.hive.serde2.objectinspector.ListObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
@@ -40,6 +45,7 @@ import org.apache.log4j.Logger;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Iterator;
 
 /**
  *  Aggregate function to combine several
@@ -79,7 +85,7 @@ public class CombineUniqueUDAF extends AbstractGenericUDAFResolver {
 		///private StandardListObjectInspector internalMergeOI;
 
 
-		static class UniqueSetBuffer implements AggregationBuffer {
+		static class UniqueSetBuffer extends AbstractAggregationBuffer {
 			HashSet collectSet = new HashSet();
 		}
 
@@ -94,14 +100,13 @@ public class CombineUniqueUDAF extends AbstractGenericUDAFResolver {
     }
 
 		@Override
-		public AggregationBuffer getNewAggregationBuffer() throws HiveException {
-			AggregationBuffer buff= new UniqueSetBuffer();
+		public AbstractAggregationBuffer getNewAggregationBuffer() throws HiveException {
+			AbstractAggregationBuffer buff= new UniqueSetBuffer();
 			reset(buff);
 			return buff;
 		}
 
-		@Override
-		public void iterate(AggregationBuffer agg, Object[] parameters)
+		public void iterate(AbstractAggregationBuffer agg, Object[] parameters)
 				throws HiveException {
 			Object p = parameters[0];
 
@@ -109,6 +114,27 @@ public class CombineUniqueUDAF extends AbstractGenericUDAFResolver {
 				UniqueSetBuffer myagg = (UniqueSetBuffer) agg;
 				putIntoSet(p, myagg);
 			}
+		}
+		@Override
+		public void iterate(AggregationBuffer agg, Object[] parameters)
+				throws HiveException {
+		    Object p = parameters[0];
+
+			if (p != null) {
+				UniqueSetBuffer myagg = (UniqueSetBuffer) agg;
+				putIntoSet(p, myagg);
+			}
+		}
+
+		public void merge(AbstractAggregationBuffer agg, Object partial)
+				throws HiveException {
+			UniqueSetBuffer myagg = (UniqueSetBuffer) agg;
+			putIntoSet( partial, myagg);
+		}
+
+		public void reset(AbstractAggregationBuffer buff) throws HiveException {
+			UniqueSetBuffer arrayBuff = (UniqueSetBuffer) buff;
+			arrayBuff.collectSet = new HashSet();
 		}
 
 		@Override
@@ -124,7 +150,15 @@ public class CombineUniqueUDAF extends AbstractGenericUDAFResolver {
 			arrayBuff.collectSet = new HashSet();
 		}
 
-		@Override
+		public Object terminate(AbstractAggregationBuffer agg) throws HiveException {
+			UniqueSetBuffer myagg = (UniqueSetBuffer) agg;
+			ArrayList<Object> ret = new ArrayList<Object>(myagg.collectSet.size());
+			ret.addAll( myagg.collectSet );
+			return ret;
+
+		}
+
+	        @Override
 		public Object terminate(AggregationBuffer agg) throws HiveException {
 			UniqueSetBuffer myagg = (UniqueSetBuffer) agg;
 			ArrayList<Object> ret = new ArrayList<Object>(myagg.collectSet.size());
@@ -133,8 +167,17 @@ public class CombineUniqueUDAF extends AbstractGenericUDAFResolver {
 
 		}
 
+
     private void putIntoSet(Object p, UniqueSetBuffer myagg) {
-      List pList = inputOI.getList(p);
+	ArrayList<Object> finalList = new ArrayList<Object>();
+	scala.collection.mutable.ArrayBuffer b =  (scala.collection.mutable.ArrayBuffer) p;
+	scala.collection.Iterator iter = b.toIterator();
+	while(iter.hasNext()){
+		Object o = iter.next();
+		finalList.add(o);
+	}
+
+      ArrayList<Object> pList = (ArrayList<Object>) inputOI.getList(finalList);
       ObjectInspector objInsp = inputOI.getListElementObjectInspector();
       for( Object obj : pList) {
         Object realObj = ((PrimitiveObjectInspector)objInsp).getPrimitiveJavaObject( obj);
@@ -144,6 +187,13 @@ public class CombineUniqueUDAF extends AbstractGenericUDAFResolver {
 
 		@Override
 		public Object terminatePartial(AggregationBuffer agg) throws HiveException {
+			UniqueSetBuffer myagg = (UniqueSetBuffer) agg;
+			ArrayList<Object> ret = new ArrayList<Object>(myagg.collectSet.size());
+			ret.addAll(myagg.collectSet);
+			return ret;
+		}
+
+		public Object terminatePartial(AbstractAggregationBuffer agg) throws HiveException {
 			UniqueSetBuffer myagg = (UniqueSetBuffer) agg;
 			ArrayList<Object> ret = new ArrayList<Object>(myagg.collectSet.size());
 			ret.addAll(myagg.collectSet);
