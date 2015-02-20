@@ -25,6 +25,11 @@ package brickhouse.udf.collect;
 import java.util.ArrayList;
 import java.util.HashMap;
 
+import scala.collection.mutable.ArrayBuffer;
+import scala.collection.mutable.Buffer;
+import scala.collection.Seq;
+import scala.collection.JavaConversions;
+
 import org.apache.hadoop.hive.ql.exec.Description;
 import org.apache.hadoop.hive.ql.exec.UDFArgumentTypeException;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
@@ -71,7 +76,7 @@ public class CollectUDAF extends AbstractGenericUDAFResolver {
 		private StandardListObjectInspector internalMergeOI;
 
 
-		static class ArrayAggBuffer implements AggregationBuffer {
+		static class ArrayAggBuffer extends AbstractAggregationBuffer {
 			ArrayList collectArray = new ArrayList();
 		}
 
@@ -81,10 +86,10 @@ public class CollectUDAF extends AbstractGenericUDAFResolver {
 			// init output object inspectors
 			// The output of a partial aggregation is a list
 			if (m == Mode.PARTIAL1) {
-				inputOI = parameters[0];
-				return ObjectInspectorFactory
-						.getStandardListObjectInspector( ObjectInspectorUtils
-								.getStandardObjectInspector(inputOI));
+			    inputOI = parameters[0];
+			    return ObjectInspectorFactory
+				.getStandardListObjectInspector( ObjectInspectorUtils
+								 .getStandardObjectInspector(inputOI));
 			} else {
 				if (!(parameters[0] instanceof StandardListObjectInspector)) {
 					//no map aggregation.
@@ -102,8 +107,8 @@ public class CollectUDAF extends AbstractGenericUDAFResolver {
 		}
 
 		@Override
-		public AggregationBuffer getNewAggregationBuffer() throws HiveException {
-			AggregationBuffer buff= new ArrayAggBuffer();
+		public AbstractAggregationBuffer getNewAggregationBuffer() throws HiveException {
+			AbstractAggregationBuffer buff= new ArrayAggBuffer();
 			reset(buff);
 			return buff;
 		}
@@ -145,9 +150,29 @@ public class CollectUDAF extends AbstractGenericUDAFResolver {
 		}
 
 		private void putIntoSet(Object p, ArrayAggBuffer myagg) {
-			Object pCopy = ObjectInspectorUtils.copyToStandardObject(p,
+			if (p instanceof scala.collection.mutable.ArrayBuffer) {
+			    System.out.println("FOUND A SCALA ARRAYBUFFER");
+			    System.out.println(p.getClass().getName());
+			    ArrayList<Object> finalList = new ArrayList<Object>();
+			    scala.collection.mutable.ArrayBuffer b =  (scala.collection.mutable.ArrayBuffer) p;
+			    scala.collection.Iterator iter = b.toIterator();
+			    while(iter.hasNext()){
+				Object o = iter.next();
+				finalList.add(o);
+			    }
+
+			    ArrayList<Object> pList = (ArrayList<Object>) loi.getList(finalList);
+
+			    myagg.collectArray.add(pList);
+			}
+
+			else{
+			    Object pCopy = ObjectInspectorUtils.copyToStandardObject(p,
 					this.inputOI);
-			myagg.collectArray.add( pCopy);
+			    System.out.println("DID NOT FIND AN ARRAYBUFFER");
+			    System.out.println(pCopy.getClass().getName());
+			    myagg.collectArray.add( pCopy);
+			}
 		}
 
 		@Override
@@ -169,7 +194,7 @@ public class CollectUDAF extends AbstractGenericUDAFResolver {
 		private StandardMapObjectInspector internalMergeOI;
 
 
-		static class MapAggBuffer implements AggregationBuffer {
+		static class MapAggBuffer extends AbstractAggregationBuffer {
 			HashMap<Object,Object> collectMap = new HashMap<Object,Object>();
 		}
 
@@ -204,8 +229,8 @@ public class CollectUDAF extends AbstractGenericUDAFResolver {
 		}
 
 		@Override
-		public AggregationBuffer getNewAggregationBuffer() throws HiveException {
-			AggregationBuffer buff= new MapAggBuffer();
+		public AbstractAggregationBuffer getNewAggregationBuffer() throws HiveException {
+			AbstractAggregationBuffer buff= new MapAggBuffer();
 			reset(buff);
 			return buff;
 		}
